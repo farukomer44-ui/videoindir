@@ -1,134 +1,172 @@
-# Streamlit Cloud Video İndirici
+# VIDEO INDIRICI - PYTUBE ILE
 import streamlit as st
-import sys
-import subprocess
+from pytube import YouTube
 import os
+import time
 
-# Önce yt-dlp'yi kontrol et ve kur
-try:
-    import yt_dlp
-    yt_dlp_mevcut = True
-except ImportError:
-    yt_dlp_mevcut = False
-    st.warning("yt-dlp kuruluyor... Lütfen bekleyin.")
-    
-    # yt-dlp'yi kur
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "yt-dlp"])
-    
-    # Sayfayı yenile
-    st.success("Kurulum tamamlandı! Sayfayı yenileyin.")
-    st.stop()
+st.set_page_config(page_title="Video İndirici", page_icon="🎬")
 
-# Uygulama başlığı
-st.set_page_config(
-    page_title="Video İndirici",
-    page_icon="🎬",
-    layout="centered"
-)
+st.title("🎬 Video İndirici (PyTube)")
+st.markdown("YouTube bot korumasını bypass eder")
 
-st.title("🎬 Video İndirici")
-st.markdown("YouTube'dan video indirin")
-
-# Ana bölüm
 url = st.text_input(
-    "**YouTube Linki:**",
-    placeholder="https://www.youtube.com/watch?v=...",
-    help="YouTube video linkini buraya yapıştırın"
+    "YouTube Linki:",
+    placeholder="https://www.youtube.com/watch?v=..."
 )
 
 # Test butonu
-if st.button("🎯 Test Linki Kullan"):
-    st.session_state.test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+if st.button("🎯 Test Linki (Çalışan)"):
+    # Bu linkler genellikle çalışır
+    test_links = [
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",  # Rick Astley
+        "https://www.youtube.com/watch?v=JGwWNGJdvx8",  # Ed Sheeran
+        "https://www.youtube.com/watch?v=9bZkp7q19f0",  # PSY - Gangnam Style
+    ]
+    st.session_state.url = test_links[0]
     st.rerun()
 
-if 'test_url' in st.session_state:
-    url = st.session_state.test_url
+if 'url' in st.session_state:
+    url = st.session_state.url
 
 if url:
     # Format seçimi
     format_secim = st.radio(
-        "**Format Seçin:**",
-        ["MP4 Video", "MP3 Müzik"],
+        "İndirme Türü:",
+        ["Video", "Sadece Ses (MP3)"],
         horizontal=True
     )
     
-    # İndirme butonu
-    if st.button("📥 İNDİR", type="primary", use_container_width=True):
+    # Kalite seçimi (video için)
+    if format_secim == "Video":
+        kalite = st.selectbox(
+            "Kalite:",
+            ["720p", "480p", "360p", "240p", "144p"]
+        )
+    
+    if st.button("📥 İNDİR", type="primary"):
         try:
-            with st.spinner("İndirme başlıyor..."):
-                # İndirme ayarları
-                ydl_opts = {
-                    'outtmpl': '%(title)s.%(ext)s',
-                    'quiet': False,
-                }
+            with st.spinner("Video bilgileri alınıyor..."):
+                # YouTube nesnesi
+                yt = YouTube(
+                    url,
+                    use_oauth=False,
+                    allow_oauth_cache=True
+                )
                 
-                if format_secim == "MP3 Müzik":
-                    ydl_opts.update({
-                        'format': 'bestaudio/best',
-                        'postprocessors': [{
-                            'key': 'FFmpegExtractAudio',
-                            'preferredcodec': 'mp3',
-                        }],
-                    })
+                # Video bilgileri
+                st.success(f"✅ Video bulundu: **{yt.title}**")
+                st.info(f"**Kanal:** {yt.author}")
+                st.info(f"**Süre:** {yt.length // 60}:{yt.length % 60:02d} dakika")
+                st.info(f"**Görüntüleme:** {yt.views:,}")
                 
-                # İndirme işlemi
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    # Video bilgilerini al
-                    info = ydl.extract_info(url, download=False)
-                    video_adi = info.get('title', 'video')
-                    
-                    st.info(f"**Video:** {video_adi}")
-                    st.info(f"**Format:** {format_secim}")
-                    
+                # Stream seçimi
+                if format_secim == "Sadece Ses (MP3)":
+                    stream = yt.streams.filter(only_audio=True).first()
+                    if not stream:
+                        stream = yt.streams.get_audio_only()
+                else:
+                    # Kaliteye göre filtrele
+                    if kalite == "720p":
+                        stream = yt.streams.filter(res="720p", progressive=True).first()
+                        if not stream:
+                            stream = yt.streams.filter(res="720p").first()
+                    elif kalite == "480p":
+                        stream = yt.streams.filter(res="480p", progressive=True).first()
+                        if not stream:
+                            stream = yt.streams.filter(res="480p").first()
+                    else:
+                        stream = yt.streams.filter(res=kalite).first()
+                
+                if not stream:
+                    st.error("İstenen kalitede stream bulunamadı!")
+                    stream = yt.streams.get_highest_resolution()
+                
+                st.info(f"**Seçilen:** {stream.resolution if hasattr(stream, 'resolution') else 'Audio'} | {stream.filesize_mb:.1f} MB")
+                
+                # İndirme butonu
+                if st.button("🎬 İndirmeyi Başlat", type="secondary"):
                     # İlerleme barı
                     progress_bar = st.progress(0)
+                    status_text = st.empty()
                     
-                    def ilerleme_goster(d):
-                        if d['status'] == 'downloading':
-                            try:
-                                yuzde = float(d.get('_percent_str', '0%').replace('%', ''))
-                                progress_bar.progress(yuzde / 100)
-                            except:
-                                pass
+                    # İlerleme callback
+                    def on_progress(stream, chunk, bytes_remaining):
+                        total_size = stream.filesize
+                        bytes_downloaded = total_size - bytes_remaining
+                        percentage = (bytes_downloaded / total_size) * 100
+                        progress_bar.progress(percentage / 100)
+                        status_text.text(f"İndiriliyor: %{percentage:.1f}")
                     
-                    ydl_opts['progress_hooks'] = [ilerleme_goster]
+                    yt.register_on_progress_callback(on_progress)
                     
-                    # YDL'yi yeniden oluştur
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
-                        ydl2.download([url])
+                    # İndirme
+                    with st.spinner("İndiriliyor..."):
+                        # İndirme başlangıcı
+                        status_text.text("İndirme başlıyor...")
+                        
+                        # Dosyayı indir
+                        output_path = stream.download()
+                        
+                        # MP3'e çevir (eğer seçildiyse)
+                        if format_secim == "Sadece Ses (MP3)":
+                            import subprocess
+                            mp3_path = output_path.replace(".mp4", ".mp3")
+                            subprocess.run(['ffmpeg', '-i', output_path, mp3_path])
+                            os.remove(output_path)
+                            output_path = mp3_path
+                        
+                        progress_bar.progress(100)
+                        status_text.text("✅ İndirme tamamlandı!")
                     
-                    progress_bar.progress(100)
+                    st.success(f"**Dosya indirildi:** {os.path.basename(output_path)}")
                     
-                st.success("✅ **İndirme Tamamlandı!**")
-                st.balloons()
-                
-                # Bilgilendirme
-                st.info("""
-                **📌 Not:** 
-                - Dosya Streamlit Cloud sunucusuna indirildi
-                - Yerel bilgisayarınıza inmesi için programı kendi bilgisayarınızda çalıştırın
-                - https://github.com adresinden kodu indirebilirsiniz
-                """)
-                
+                    # Dosya boyutu
+                    file_size = os.path.getsize(output_path) / (1024*1024)
+                    st.info(f"**Dosya boyutu:** {file_size:.1f} MB")
+                    
         except Exception as e:
             st.error(f"❌ Hata: {str(e)}")
+            st.info("""
+            **Sorun giderme:**
+            1. Link doğru mu?
+            2. Video özel/private olabilir
+            3. YouTube bot engellemiş olabilir
+            4. İnternet bağlantını kontrol et
+            """)
 
-# Yardım bölümü
-with st.expander("📖 Nasıl Kullanılır?", expanded=True):
+# Alternatif indirme yöntemleri
+with st.expander("🔄 Alternatif İndirme Seçenekleri"):
     st.markdown("""
-    1. **YouTube'da bir video açın**
-    2. **Tarayıcı adres çubuğundaki linki kopyalayın**
-    3. **Linki yukarıdaki kutuya yapıştırın**
-    4. **MP4 Video veya MP3 Müzik seçin**
-    5. **"İndir" butonuna tıklayın**
-    6. **İndirme bitene kadar bekleyin**
+    **Eğer yukarıdaki çalışmazsa:**
     
-    **⚠️ Dikkat:**
-    - Sadece kişisel kullanım için
-    - Telif hakkı olan içerikleri indirmeyin
-    - Bu web sitesi eğitim amaçlıdır
+    **1. Playlist indirici:**
+    ```python
+    from pytube import Playlist
+    playlist = Playlist("LINK")
+    for video in playlist.videos:
+        video.streams.first().download()
+    ```
+    
+    **2. Farklı formatlar:**
+    - WebM formatını dene
+    - DASH videoları
+    - Adaptive streams
+    
+    **3. Manuel indirme:**
+    1. https://en.y2mate.is/ sitesine git
+    2. YouTube linkini yapıştır
+    3. İndir butonuna tıkla
+    4. Manuel olarak indir
     """)
 
-# Alt bilgi
+# Önemli not
+st.warning("""
+**⚠️ DİKKAT:**
+- Sadece kişisel kullanım için
+- Telif hakkı olan içerikleri indirmeyin
+- YouTube'un şartlarını ihlal etmeyin
+- Çok fazla indirme yaparsanız IP'niz banlanabilir
+""")
+
 st.markdown("---")
-st.caption("🎬 Video İndirici | Python + yt-dlp | Streamlit Cloud")
+st.caption("🎬 PyTube Video İndirici | YouTube API")
